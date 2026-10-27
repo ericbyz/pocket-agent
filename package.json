@@ -1,6 +1,6 @@
 {
   "name": "pocket-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Control AI agents on your Windows PC from your phone. 用手机 App 驱动 Windows 服务端上的各种 Agent。",
   "packageManager": "pnpm@10.34.7",
@@ -15,5 +15,11 @@
   },
   "devDependencies": {
     "typescript": "^5.8.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }

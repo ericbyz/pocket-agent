@@ -1,6 +1,6 @@
 {
   "name": "@pocket-agent/mobile",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -11,7 +11,12 @@
   },
   "dependencies": {
     "@pocket-agent/protocol": "workspace:*",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~54.0.0",
+    "expo-document-picker": "~14.0.0",
+    "expo-file-system": "~19.0.0",
+    "expo-linking": "~8.0.0",
+    "expo-sharing": "~14.0.0",
     "react": "19.1.0",
     "react-native": "0.81.4",
     "zod": "^3.25.0"

@@ -1,55 +1,78 @@
 # Pocket Agent ⚡📱
 
-**用手机驱动 Windows 电脑上的各种 Agent —— 写项目、跑命令、管文件、截屏，都在掌心完成。**
+**把整台 Windows 电脑装进手机：远程终端、AI 编码、文件传输、屏幕点选控制——全部通过一个 token 配对的连接完成。**
 
-Control AI agents running on your Windows PC from your phone: coding tasks, shell commands,
-files, screenshots — over a token-paired WebSocket connection.
+Pocket Agent turns your Windows PC into a fleet of remotely-drivable agents. From your phone you get an
+interactive PowerShell terminal, AI coding sessions, file browsing/transfer, screenshots with
+tap-to-click mouse control, process/clipboard/power management — over a token-paired WebSocket with
+automatic reconnection and server-side task persistence.
 
-服务端把电脑能力封装成一个个 **Agent**（命令执行、截屏、文件读写、编码 Agent……），手机 App 通过
-**token 配对的 WebSocket** 连上服务端，就能在手机上触发任务、实时看到输出流、随时终止。
+## 它能做什么
+
+| 能力 | 说明 |
+| --- | --- |
+| 🖥️ **远程终端** | 双向 PowerShell：手机上敲命令，输出实时回传，随时终止 |
+| 🧑‍💻 **AI 编码** | 驱动 zcode / claude / codex 等 CLI 编码 agent 在项目目录干活，支持多轮交互 |
+| 📁 **文件传输** | 浏览 / 搜索 / 编辑工作区文件，手机 ⇄ 电脑双向分片传输（sha256 校验） |
+| 🖱️ **屏幕点选** | 截图回传手机，开启点选模式后「点哪里点哪里」，另有键盘输入 / 组合键 / 滚轮 |
+| ⚙️ **系统管理** | 进程列表与结束、剪贴板读写、锁屏 / 睡眠 / 关机 / 重启 |
+| 📋 **任务中心** | 所有任务在服务端排队执行并落库（SQLite）：历史、状态、断线重连自动补发事件流 |
+| 🔔 **完成通知** | 任务在你没连着时完成，推送 ntfy / webhook 通知 |
+| 📱 **扫码配对** | 服务端终端直接打印二维码，手机扫码即连（深链 `pocket-agent://connect?...`） |
 
 ## 架构
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph phone["📱 手机 App（Expo / iOS · Android）"]
-        UI["连接配对 / Agent 列表 / 调用与输出流"]
+        UI["连接管理（多服务器 · 扫码 · 自动重连）"]
+        TASKS["任务中心 / 实时输出 / 交互输入"]
+        FILES["文件浏览器 / 上传下载"]
+        TAP["截图点选 → mouse_click"]
     end
-    subgraph pc["🖥️ Windows 服务端（Node.js 22 + ws）"]
-        WS["WebSocket + /health"]
-        AUTH["Token 配对鉴权"]
-        REG["Agent 注册中心"]
-        A1["💻 Computer Agent<br/>PowerShell 命令 / 截屏 / 系统信息"]
-        A2["📁 Files Agent<br/>工作区文件读写"]
-        A3["🧑‍💻 Coding Agent<br/>驱动 zcode / claude / codex 等 CLI"]
+    subgraph pc["🖥️ Windows 服务端（Node.js 22）"]
+        WS["WebSocket Hub<br/>token 配对 · 限流 · 心跳 · resume 补发"]
+        TM["TaskManager<br/>并发队列 · 取消 · stdin 路由"]
+        DB[("SQLite<br/>任务 + 事件环形缓冲")]
+        A1["💻 computer<br/>终端·截屏·鼠标键盘·进程·剪贴板·电源"]
+        A2["📁 files<br/>浏览·搜索·编辑·分片传输"]
+        A3["🧑‍💻 coding<br/>zcode/claude/codex CLI"]
+        NOTIFY["ntfy / webhook 通知"]
     end
-    UI -- "JSON 消息（@pocket-agent/protocol）" --> WS
-    WS --> AUTH --> REG
-    REG --> A1 & A2 & A3
+    UI -- "JSON（@pocket-agent/protocol · 全局 seq 事件流）" --> WS
+    WS --> TM <--> DB
+    TM --> A1 & A2 & A3
+    TASKS -.subscribe.-> TM
+    TAP -.mouse_click.-> A1
+    TM --> NOTIFY
 ```
 
-- **协议**：`packages/protocol` 用 zod 定义全部消息（hello 配对、agent.invoke 调用、agent.event 事件流），
-  服务端与手机端共享同一份 schema 与类型。
-- **事件流**：长任务（跑命令、跑编码 agent）通过 `output` 事件把 stdout/stderr 实时推回手机，
-  随时可以 `agent.cancel` 终止（Windows 下连子进程树一起杀）。
-- **多 Agent 插拔**：实现一个 `ServerAgent` 接口并注册即可，App 端自动发现并列出动作。
+- **协议**（`packages/protocol`）：zod schema + TS 类型两端共享；每条 agent 事件带全局递增 `seq`。
+- **断线不丢数据**：任务在服务端继续执行、事件落库；手机重连时带 `hello.since`（本地持久化的游标），服务端按 seq 补发错过的事件。服务重启后遗留任务标记 `interrupted`，历史可查。
+- **多 Agent 插拔**：实现 `ServerAgent` 接口（`info` + `invoke` + 可选 `cancel`）注册即可，App 自动发现动作列表；长任务的输出流、取消、交互输入都是现成的。
 
 ## 目录结构
 
 ```
 pocket-agent/
-├── packages/protocol/     # 共享 WebSocket 协议（zod schema + 类型）
-├── apps/server/           # Windows 服务端（Node.js 22 + ws）
-│   └── src/agents/        #   computer / files / coding 三个内置 agent
-└── apps/mobile/           # 手机 App（Expo + React Native，TypeScript）
+├── packages/protocol/     # WebSocket 协议（zod schema + 类型）
+├── apps/server/           # Windows 服务端
+│   ├── src/hub.ts         #   连接层：鉴权 / 限流 / 心跳 / resume
+│   ├── src/task-manager.ts#   任务生命周期：队列 / 取消 / stdin / 通知
+│   ├── src/store.ts       #   SQLite 持久层（better-sqlite3）
+│   └── src/agents/        #   computer / files / coding
+└── apps/mobile/           # 手机 App（Expo + React Native）
+    └── src/screens/       #   连接 / 主页 / Agent 表单 / 任务中心 / 任务详情 / 文件
 ```
+
+详细设计见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 快速开始
 
 ### 环境要求
 
 - 电脑：Windows 10/11、Node.js ≥ 22、pnpm ≥ 10
-- 手机：安装 [Expo Go](https://expo.dev/go)（iOS / Android 均可），与服务端**同一局域网**
+- 手机：[Expo Go](https://expo.dev/go)（iOS / Android），与服务端**同一局域网**
 
 ### 1. 启动服务端
 
@@ -58,17 +81,18 @@ pnpm install
 pnpm dev:server
 ```
 
-启动后控制台会打印局域网地址和配对 token：
+终端会打印局域网地址、配对 token 和一张**配对二维码**：
 
 ```
-  ⚡ Pocket Agent Server v0.1.0
+  ⚡ Pocket Agent Server v0.2.0
   ──────────────────────────────────────────────
-  局域网地址    ws://192.168.1.8:4310
-  本机地址      ws://127.0.0.1:4310
-  配对 token    3f9c2a…（每次启动随机生成）
-  工作区        D:\demo
-  shell 执行    关闭（设置 PA_ALLOW_SHELL=1 开启）
-  coding agent  未配置（可选，见下文）
+  局域网地址    ws://192.168.50.7:4310
+  配对 token    3f9c2a…
+  shell/控制类  关闭（设置 PA_ALLOW_SHELL=1 开启终端/鼠标键盘等）
+  …
+  手机 App 扫码配对（或手动输入上面的地址与 token）：
+  ▄▄▄▄▄▄▄▄▄▄▄█▀▄█▀ ▀▀ ███▄▀ █ ▄█ ▄▄▄▄▄█
+  …
 ```
 
 > 首次启动如弹出 Windows 防火墙提示，请选择「允许」（专用网络）。
@@ -79,55 +103,62 @@ pnpm dev:server
 pnpm dev:mobile
 ```
 
-用手机上的 Expo Go 扫终端二维码打开 App，把服务端打印的 **地址、端口、token** 填进去，点「连接」。
+用手机上的 Expo Go 扫终端二维码打开 App；再扫服务端打印的**配对二维码**（或手动输入地址 + token），点「连接」。连接信息会保存，下次自动重连。
 
 ### 3. 试试这些
 
-| 在 App 里 | 能做什么 |
-| --- | --- |
-| `computer.sysinfo` | 一键看主机名、CPU、内存、运行时长 |
-| `computer.screenshot` | 截屏并在手机上直接预览 |
-| `computer.run_command` | 远程执行 PowerShell 命令，输出实时回传（需 `PA_ALLOW_SHELL=1`） |
-| `files.list / read / write` | 浏览和编辑服务端工作区里的文件（限制在 `PA_WORKSPACE` 内） |
-| `coding.run_task` | 在项目目录里驱动 CLI 编码 agent 干活，输出实时回传（需配置，见下文） |
+- **远程终端**：Computer Agent → `run_command` → 打开「交互模式」→ 运行 → 在任务详情底部输入命令
+- **AI 编码**：配置 coding agent（见下文）→ `run_task` 输入任务描述 → 实时看 agent 干活，`interactive` 可多轮追问
+- **屏幕控制**：`screenshot` → 任务详情里打开「点选模式」→ 点截图任意位置即点击鼠标；配合 `key_type` / `key_tap` 可以完全远程操作
+- **传文件**：文件 → 浏览目录 → 选文件可预览 / 编辑 / 下载到手机；右上角「上传」把手机文件传上来
+- **挂机任务**：发起一个长任务后锁屏走人；任务在服务端继续跑，重连自动补发输出；没连着时完成会推 ntfy 通知
 
 ### 让 Coding Agent 跑起来
 
-coding agent 不绑定具体工具，用一个「命令 + 参数模板」配置即可驱动任何 CLI 编码 agent
-（zcode / claude / codex …）。参数模板中的 `{{prompt}}` 会被替换成你在手机上输入的任务描述：
+coding agent 不绑定具体工具，用「命令 + 参数模板」驱动任何 CLI 编码 agent。模板中的 `{{prompt}}` 会被替换为任务描述（spawn 不经 shell，无注入风险）：
 
 ```bash
-# 例：驱动 claude CLI
 PA_CODING_COMMAND=claude PA_CODING_ARGS='["-p","{{prompt}}"]' pnpm dev:server
-
-# 例：驱动 zcode CLI
-PA_CODING_COMMAND=zcode PA_CODING_ARGS='["-p","{{prompt}}"]' pnpm dev:server
 ```
 
-命令通过 `spawn` 直接执行、不经过 shell，任务描述不会被解释成命令注入。
+### 任务完成通知（ntfy）
 
-## 环境变量
+```bash
+# 手机装 ntfy 应用并订阅一个 topic，服务端：
+PA_NOTIFY_URL=https://ntfy.sh/my-secret-topic pnpm dev:server
+```
 
-| 变量 | 默认 | 说明 |
-| --- | --- | --- |
-| `PA_PORT` | `4310` | WebSocket 监听端口 |
-| `PA_HOST` | `0.0.0.0` | 监听地址 |
-| `PA_TOKEN` | 每次随机 | 配对 token；固定下来方便重连 |
-| `PA_WORKSPACE` | 当前目录 | files / coding agent 的工作区根目录（越界访问会被拒绝） |
-| `PA_ALLOW_SHELL` | 关闭 | `1` = 允许 `computer.run_command` 执行 PowerShell |
-| `PA_CODING_COMMAND` | 未配置 | coding agent 的 CLI 命令 |
-| `PA_CODING_ARGS` | `["{{prompt}}"]` | coding agent 的参数模板（JSON 数组） |
+无客户端连接时，任务完成/失败会推送到该 topic（也可用任何接收 POST 的 webhook）。
+
+## 配置
+
+优先级：环境变量 > `pocket-agent.json`（工作目录，已 gitignore）> 默认值。
+
+| 环境变量 | 配置文件键 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `PA_PORT` | `port` | `4310` | WebSocket 端口 |
+| `PA_HOST` | `host` | `0.0.0.0` | 监听地址 |
+| `PA_TOKEN` | `token` | 每次随机 | 配对 token |
+| `PA_WORKSPACE` | `workspace` | 当前目录 | files / coding 的工作区根（越界拒绝） |
+| `PA_ALLOW_SHELL` | `allowShell` | 关闭 | `1` 开启终端 / 鼠标键盘 / 电源等控制类动作 |
+| `PA_CODING_COMMAND` | `codingCommand` | 未配置 | coding agent 的 CLI 命令 |
+| `PA_CODING_ARGS` | `codingArgs` | `["{{prompt}}"]` | 参数模板（JSON 数组） |
+| `PA_DATA_DIR` | `dataDir` | `./data` | SQLite 数据目录 |
+| `PA_MAX_CONCURRENT` | `maxConcurrent` | `3` | 并发任务上限，超出排队 |
+| `PA_NOTIFY_URL` | `notifyUrl` | 关闭 | 任务完成通知（ntfy / webhook） |
+| `PA_CANCEL_ON_DISCONNECT` | `cancelOnDisconnect` | 关闭 | 最后一个客户端断开时取消运行中任务 |
 
 ## 安全须知
 
-- **token 是唯一的身份凭证**，只在不信任的对话者面前保密；错误 token 的连接会被立即关闭。
-- `computer.run_command` 等于把电脑 shell 交到手机手里，**默认关闭**，确认局域网环境可信再开。
-- files agent 的所有路径都被限制在 `PA_WORKSPACE` 内；删除操作要求显式 `confirm: true`。
-- 当前连接是**局域网明文 WebSocket**，适合家庭/内网使用；公网访问请等 wss/TLS 支持（见 Roadmap）。
+- **token 是唯一身份凭证**；错误 token 的连接被立即关闭（`timingSafeEqual` 比较）。
+- 终端、进程结束、鼠标键盘注入、电源动作都属于**控制类高危动作**，默认关闭，确认局域网可信后再开 `PA_ALLOW_SHELL=1`。截屏 / 剪贴板 / 进程列表属于信息暴露类，请自行权衡。
+- files agent 的路径被限制在 `PA_WORKSPACE` 内（含上传 / 下载）；删除需显式 `confirm: true`；上传先写临时文件再原子改名。
+- 每连接限流（突发 30、每秒补充 0.25）+ 服务端心跳（90s 无响应断开），防止失控客户端。
+- 当前为**局域网明文 WebSocket**；公网使用请自备反向代理加 TLS（原生 wss 支持在 Roadmap）。
 
 ## 二次开发：新增一个 Agent
 
-1. 在 `apps/server/src/agents/` 下实现 `ServerAgent` 接口（`info` 元数据 + `invoke`）：
+1. 在 `apps/server/src/agents/` 实现 `ServerAgent`：
 
 ```ts
 export class MyAgent implements ServerAgent {
@@ -140,35 +171,38 @@ export class MyAgent implements ServerAgent {
 
   async invoke(action: string, params: unknown, ctx: AgentContext & InvokeContext): Promise<void> {
     ctx.emit({ kind: 'started' })
+    // 长任务：流式输出 + 支持取消 + 可选交互输入
+    ctx.emit({ kind: 'output', stream: 'stdout', chunk: 'working…\n' })
+    ctx.setInput((data) => { /* 写进程 stdin */ })   // 可选：交互式
     ctx.emit({ kind: 'completed', result: { hello: 'world' } })
   }
+
+  cancel(requestId: string) { /* 尽力终止 */ }
 }
 ```
 
-2. 在 `apps/server/src/agents/registry.ts` 注册。
-3. 没了。手机 App 会自动列出这个 agent 和它的所有动作，长任务的 `output` 事件流、取消按钮也都是现成的。
-
-协议消息定义见 [packages/protocol/src/index.ts](packages/protocol/src/index.ts)。
+2. 在 `registry.ts` 注册。
+3. 没了——App 自动列出 agent 与动作，输出流 / 取消 / 任务历史 / 断线补发全部继承。
 
 ## 开发
 
 ```bash
 pnpm typecheck   # 全 workspace 类型检查
-pnpm smoke       # 服务端端到端冒烟测试（配对 → 调用 → 输出流 → 越权拒绝 → 坏 token 拒绝）
+pnpm smoke       # 端到端冒烟（13 组断言：配对/终端/传输/限流/断线补发/重启持久化…）
 pnpm dev:server  # 启动服务端
 pnpm dev:mobile  # 启动 Expo
 ```
 
-CI（GitHub Actions）：ubuntu 上跑 typecheck，windows 上跑 smoke。
+CI（GitHub Actions）：ubuntu 跑 typecheck，windows 跑 smoke。
 
 ## Roadmap
 
-- [ ] 扫二维码配对（免手输地址和 token）
-- [ ] wss/TLS，以及内网穿透/中继模式（不在同一局域网也能连）
-- [ ] Agent 插件 API：第三方 agent 独立包注册
-- [ ] 屏幕实时串流与远程触控
-- [ ] 文件双向传输（上传 / 大文件分块）
-- [ ] 任务完成推送通知、多设备同时连接与权限分级
+- [ ] wss/TLS 与公网中继模式（frp/tailscale 场景文档先行）
+- [ ] Agent 插件独立包（npm install 即挂载）
+- [ ] 屏幕实时串流（当前为按需截图 + 点选）
+- [ ] 多设备权限分级（只读 / 操作 / 管理）
+- [ ] coding agent 会话恢复（服务重启后续跑 CLI）
+- [ ] 任务定时触发与 webhook 触发
 
 ## License
 
