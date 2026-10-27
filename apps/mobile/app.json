@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Pocket Agent",
+    "slug": "pocket-agent",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0e1116",
+    "ios": {
+      "bundleIdentifier": "com.ericbyz.pocketagent",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.ericbyz.pocketagent"
+    }
+  }
+}

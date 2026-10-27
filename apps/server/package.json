@@ -1,0 +1,24 @@
+{
+  "name": "@pocket-agent/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pocket Agent Windows 服务端：承载各种 Agent，通过 WebSocket 与手机 App 通信",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "dependencies": {
+    "@pocket-agent/protocol": "workspace:*",
+    "ws": "^8.18.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}

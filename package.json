@@ -1,0 +1,19 @@
+{
+  "name": "pocket-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Control AI agents on your Windows PC from your phone. 用手机 App 驱动 Windows 服务端上的各种 Agent。",
+  "packageManager": "pnpm@10.34.7",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:server": "pnpm --filter @pocket-agent/server dev",
+    "dev:mobile": "pnpm --filter @pocket-agent/mobile start",
+    "typecheck": "pnpm -r typecheck",
+    "smoke": "pnpm --filter @pocket-agent/server smoke"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

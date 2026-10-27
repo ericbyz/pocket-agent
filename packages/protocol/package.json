@@ -1,0 +1,17 @@
+{
+  "name": "@pocket-agent/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pocket Agent 手机端与服务端之间的 WebSocket 消息协议（zod schema + 类型）",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}
